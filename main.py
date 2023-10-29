@@ -4,6 +4,7 @@ from exif import Image as exifImage
 from PIL.ExifTags import TAGS
 from pathlib import Path
 from rich import print
+from rich.console import console
 import logging
 
 logging.basicConfig(level=logging.DEBUG)
