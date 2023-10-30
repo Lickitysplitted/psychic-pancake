@@ -1,83 +1,83 @@
-import os, requests, json, argparse, sys, filetype
-from PIL import Image as PILImage
-from exif import Image as exifImage
-from PIL.ExifTags import TAGS
+import os, requests, json, argparse
+from PIL import Image
 from pathlib import Path
-from rich import print
+from rich import print as rprint
 from rich.console import console
-import logging
-
-logging.basicConfig(level=logging.DEBUG)
 
 #Initialize parser and cli arguments
 parser = argparse.ArgumentParser()
-parser.add_argument("-o", "--outputfile", required=False, help = "Output file")# might be able to specifiy file type
+parser.add_argument("-o", "--output", required=False, help = "Output file")# might be able to specifiy file type
 parser.add_argument("-i", "--input", help = "Input image")# might be able to specifiy file type
-parser.add_argument("-d", "--input_directory", help = "Input directory")
 parser.add_argument("-T", "--cftoken", required=False, help = "Cloudflare token")
 parser.add_argument("-I", "--cfid", required=False, help = "Cloudflare account ID")
-parser.add_argument("-H", "--cfhash", required=False, help = "Cloudflare account hash")
 args = parser.parse_args()
 
-def meta_scrubber(input_abspath):# scrub all metadata
-    dirtyimg = exifImage(open(input_abspath, 'rb'))
-    # checkimg = PILImage.open(input_abspath)
-    # for tag, value in checkimg._getexif().items():
-    #     print(TAGS.get(tag), value)
-    if dirtyimg.has_exif == True:
-        print(dirtyimg.list_all())
+def output(outfile: Path, cf_data: dict):
+    if outfile:
+        outfile = Path.resolve(outfile)
+        # create outfile if it doesn't exist
+        # add cloudflare image data dict to output csv file
 
-def type_handler(unk_type):# validate file is supported image type
-    # PNG - very common and the current format used
-    # GIF - common but not currently used by the bot
-    # JPG - very common and a must
-    # WebP (Cloudflare Images does not support uploading animated WebP files) - considering dropping this as it is not a common user format
-    # SVG - supported but more work is needed to incorporate svghush to clean metadata
-    supportedtypes = ("png", "jpg")
+def type_check(unk_type):# validate file is desired image type
+    image_types = ("PNG", "JPEG")
     if unk_type:
-        file_guess = filetype.guess(unk_type)
-        if file_guess and file_guess.extension and file_guess.extension in supportedtypes:
+        type_guess = Image.open(unk_type)
+        if type_guess and type_guess.format and type_guess.format in image_types:
             return True
     return False
 
-def img_handler(input):# validate image against cloudflare requirements
-    input_name = os.path.splitext(os.path.basename(input))
-    input_abspath = os.path.abspath(input)
-    input_bytes = os.path.getsize(input_abspath)
-    input_size = int(input_bytes/(1048576))
-    maxsize = 10
-    input_w, input_h = (PILImage.open(input_abspath)).size
-    maxdimension = 12000
-    maxpizel = 100000000
-    # check GIF pixel size. Animated GIFs, including all frames, are limited to 50 megapixels (MP).
-    
-    if os.path.isfile(input) == False:# validate access
-        print(f'The image {input_name} is not available. Please check the path and filename and try again.')
-    elif (type_handler(input_abspath)) == False:# validate type
-        print(f'The file type for {input_name[0]} is currently not supported')
-    elif input_size > maxsize:# check size. Images have a 10 megabyte size limit.
-        print(f'The file {input_name[0]+input_name[1]} is {input_size} Megabytes and the max size is {maxsize}')
-    elif (input_w*input_h) > maxpizel:# check image area. Maximum image area is limited to 100 megapixels (for example, 10,000×10,000 pixels).
-        print(f'The file {input_name[0]} is {input_w*input_h} pixels and the max pixel count is {maxpizel}')
-    elif (input_w or input_h) > maxdimension:# check file dimensions. Maximum image single dimension is 12,000 pixels.
-        print(f'The file {input_name[0]} is {input_w} by {input_h} pixels and the max single dimension is {maxdimension}')
-    else:
-        cleanimgabspath = os.path.abspath(meta_scrubber(input_abspath))
-        cf_upload(input_name[0], cleanimgabspath)
+def img_handler(img: Path):# validate image against cloudflare requirements
+    img = Path(img).resolve()
+    img_name = img.name()
+    img_bytes = img.stat().st_size
+    img_w, img_h = (Image.open(img.resolve())).size
 
-def directory_handler(input_dir: Path):
-    # take cli args for directory and validate access and file types and get count
-    input_path = Path(os.path.abspath(input_dir))
+    # Cloudflare restrictions
+    cf_maxbytes = 10485760
+    cf_maxdimension = 12000
+    cf_maxpixel = 100000000
+
+    if img.is_file() == False:# validate access
+        rprint(
+            f'The image {img_name} is not available. Please check the path and filename and try again.'
+            )
+    elif (type_check(img.resolve())) == False:# validate type
+        rprint(
+            f'The file type for {img_name} is currently not supported'
+            )
+    elif img_bytes > cf_maxbytes:# check size. Images have a 10 megabyte size limit.
+        rprint(
+            f'The file {img_name} is {img_bytes} Megabytes and the max size is {cf_maxbytes}'
+            )
+    elif (img_w*img_h) > cf_maxpixel:# check image area. Maximum image area is limited to 100 megapixels (for example, 10,000×10,000 pixels).
+        rprint(
+            f'The file {img_name} is {img_w*img_h} pixels and the max pixel count is {cf_maxpixel}'
+            )
+    elif (img_w or img_h) > cf_maxdimension:# check file dimensions. Maximum image single dimension is 12,000 pixels.
+        rprint(
+            f'The file {img_name} is {img_w} by {img_h} pixels and the max single dimension is {cf_maxdimension}'
+            )
+    else:
+        return True
+
+def input_handler(input: Path):
+    if input:
+        # check if exists
+        # if file then run file then run file handler
+        # if directory then run directory handler
+
+    # take cli args for directory and validate access and file type and get count
+    input_path = Path(Path.resolve(input))
     # validate access
-    if input_dir.is_file():
+    if input.is_file():
         raise Exception('This is a file')
     else:
         input_dirfiles = [f for f in os.listdir(input_path) if os.path.isfile(f)]
         for input_dirfile in input_dirfiles:
-            input_dirfileabspath = os.path.abspath(input_dirfile)
+            input_dirfileabspath = Path.resolve(input_dirfile)
             input_dirfilename = os.path.splitext(os.path.basename(input_dirfileabspath))
-            if (type_handler(input_dirfileabspath)) == False:# validate type
-                print(f'The file type for {input_dirfilename[0]} is currently not supported')
+            if (type_check(input_dirfileabspath)) == False:# validate type
+                rprint(f'The file type for {input_dirfilename[0]} is currently not supported')
 
         #gather file count of images
 
@@ -93,10 +93,10 @@ def cf_upload(filename, abspath):
         files={'file': (filename, open(abspath, 'rb'))}
         )
     if resp.status_code != 200:
-        print(resp.status_code, resp.raise_for_status, resp.text)
+        rprint(resp.status_code, resp.raise_for_status, resp.text)
     else:
-        respjson = json.loads(resp.text)
-        print(respjson)
+        resp_json = json.loads(resp.text)
+        rprint(resp_json)
 
 def cloudflare_upload(fpath: Path,
                       cf_token: str,
@@ -116,10 +116,44 @@ def cloudflare_upload(fpath: Path,
 
 
 if args.input_directory and args.input:
-    print(f'Input image and input directory were both provided. Only one input can be specified at a time.')
+    rprint(f'Input image and input directory were both provided. Only one input can be specified at a time.')
 elif (not args.input_directory) and (not args.input):
-    print(f'No image or directory inputs specified. Please provide one input.')
+    rprint(f'No image or directory inputs specified. Please provide one input.')
 elif args.input_directory and not args.input:
     directory_handler(args.input_directory)
 elif args.input and not args.input_directory:
     img_handler(args.input)
+
+def main():
+    input = args.input
+    if input:
+        input = Path(input).resolve
+        if input.is_dir:
+            for item in input.iterdir():
+                if item.is_file:
+                    if type_check(unk_type=item) is False:
+                        # raise Warning and move to next item
+                        rprint("error")
+                    elif img_handler(img=item) is False:
+                        # raise Warning and move to next item
+                        rprint("error")
+                    else:
+                        img_data = cf_upload(img=item)
+                        output(img_data)
+        elif input.is_file:
+            if type_check(input):
+                if type_check(unk_type=input) is False:
+                    # raise Warning and move to next item
+                    rprint("error")
+                elif img_handler(img=input) is False:
+                    # raise Warning and move to next item
+                    rprint("error")
+                else:
+                    img_data = cf_upload(img=input)
+                    output(img_data)
+        else:
+            # raise Warning and move to next item
+            rprint("error")
+
+if __name__ == "__main__":
+    main()
