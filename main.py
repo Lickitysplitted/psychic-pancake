@@ -127,25 +127,25 @@ def cf_upload(img: Path):  # define cloudflare upload function and return json d
 
 
 def main():
-    input_args = args.input
-    output = args.output
-    if input_args and output:
-        input_args = Path.resolve(input_args)
-        output = Path.resolve(output)
+    input_path = args.input
+    output_path = args.output
+    if input_path and output_path:
+        input_path = Path.resolve(input_path)
+        output_path = Path.resolve(output_path)
         img_json_list = []
-        input_list = input_handler(input_arg=input_args)
-        for item in input_list:
-            item = Path.resolve(item)
-            if type_check(unk_type=item) is False:
-                # raise Warning and move to next item
+        input_files = input_handler(input_arg=input_path)
+        for file_item in input_files:
+            file_item = Path.resolve(file_item)
+            if type_check(unk_type=file_item) is False:
+                # raise Warning and move to the next item
                 print("error")
-            elif img_handler(img=item) is False:
-                # raise Warning and move to next item
+            elif img_handler(img=file_item) is False:
+                # raise Warning and move to the next item
                 print("error")
             else:
-                img_json = cf_upload(img=item)
+                img_json = cf_upload(img=file_item)
                 img_json_list.append(img_json)
-        if output_handler(out_file=output, cf_data=img_json_list):
+        if output_handler(out_file=output_path, cf_data=img_json_list):
             print("Success")
         else:
             raise Exception
