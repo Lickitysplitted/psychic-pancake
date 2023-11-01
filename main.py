@@ -3,8 +3,8 @@ from sys import exception
 from PIL import Image
 from pathlib import Path
 from rich import print
-from rich.console import console
-from rich.logging import RichHandler
+#from rich.console import console
+#from rich.logging import RichHandler
 
 """
 Todo
@@ -37,17 +37,17 @@ def output_handler(out_file: Path, cf_data: list) -> bool:# create output file a
         with open(out_file, writemode, newline='') as f:
             writer = csv.writer(f)
             for entry in cf_data:
-                images = entry["result"]["images"]
-                images_filename = images["filename"]
-                images_id = images["id"]
-                images_upload = images["uploaded"]
-                images_variants = images["variants"]
+                result = entry['result']
+                result_filename = result["filename"]
+                result_id = result["id"]
+                result_upload = result["uploaded"]
+                result_variants = result["variants"]
                 row_list.append(
                     [
-                        images_filename,
-                        images_id,
-                        images_upload,
-                        images_variants
+                        result_filename,
+                        result_id,
+                        result_upload,
+                        result_variants
                         ]
                         )
             writer.writerows(row_list)
@@ -58,8 +58,12 @@ def output_handler(out_file: Path, cf_data: list) -> bool:# create output file a
 def type_check(unk_type: Path) -> bool:# validate file is desired image type
     image_types = ("PNG", "JPEG")
     if unk_type:
-        type_guess = Image.open(unk_type)
+        try:
+            type_guess = Image.open(unk_type)
+        except Exception:
+            return False
         if type_guess and type_guess.format and type_guess.format in image_types:
+            print(unk_type, type_guess.format, "not an image")
             return True
     return False
 
@@ -87,12 +91,11 @@ def img_handler(img: Path) -> bool:# validate image against cloudflare restricti
     raise Exception
 
 def input_handler(input: Path) -> list:# determine file or directory and return list of files
-    if input:
-        if input.is_dir():
-            input_list = [f for f in input.iterdir() if f.is_file()]
-            return input_list
-        elif input.is_file():
-            return [input]
+    if input and input.is_dir():
+        input_list = [f for f in input.iterdir() if f.is_file()]
+        return input_list
+    elif input.is_file():
+        return [input]
     raise Exception
 
 def cf_upload(img: Path):# define cloudflare upload function and return json data
@@ -112,29 +115,28 @@ def cf_upload(img: Path):# define cloudflare upload function and return json dat
                 )
         else:
             resp_json = json.loads(resp.text)
-            if resp_json["success"] is "true":
-                return (resp_json)
-    raise Exception
+            if resp_json["success"] is True:
+                return resp_json
 
 def main():
     input = args.input
     output = args.output
     if input and output:
-        input = Path.resolve(input)
-        output = Path.resolve(output)
+        input = Path(input)
+        output = Path(output)
         img_json_list = []
-        input_list = input_handler(input=input)
+        input_list = input_handler(input=input.resolve())
         for item in input_list:
-            item = Path.resolve(item)
             if type_check(unk_type=item) is False:
                 # raise Warning and move to next item
-                print("error")
+                print("error bad file type")
             elif img_handler(img=item) is False:
                 # raise Warning and move to next item
-                print("error")
+                print("error file doesn't meet requirements")
             else:
                 img_json = cf_upload(img=item)
                 img_json_list.append(img_json)
+        print("before output handler")
         if output_handler(out_file=output, cf_data=img_json_list):
             print("Success")
         else:
