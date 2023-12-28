@@ -1,156 +1,161 @@
-from pathlib import Path
-
 import argparse
 import csv
-import json
+import logging
+from pathlib import Path
+
 import requests
 from PIL import Image
-from rich import print
+from rich.logging import RichHandler
 
-"""
-Todo
-replace prints with warnings and/or exceptions where appropriate
-enable logging along with rich
-"""
+# Setup rich logging
+logging.basicConfig(
+    level="INFO", format="%(message)s", datefmt="[%X]", handlers=[RichHandler()]
+)
+logger = logging.getLogger("rich")
 
-# Initialize parser and cli arguments
+# Initialize parser and CLI arguments
 parser = argparse.ArgumentParser()
-parser.add_argument("-o", "--output", required=False, help="Output CSV file")  # might be able to require file type
-parser.add_argument("-i", "--input", required=True,
-                    help="Input image or directory")  # might be able to require file type
-parser.add_argument("-T", "--cftoken", required=False, help="Cloudflare token")
-parser.add_argument("-I", "--cfid", required=False, help="Cloudflare account ID")
+parser.add_argument("-o", "--output", help="Output CSV file")
+parser.add_argument("-i", "--input", required=True, help="Input image or directory")
+parser.add_argument("-T", "--cftoken", help="Cloudflare token")
+parser.add_argument("-I", "--cfid", help="Cloudflare account ID")
 args = parser.parse_args()
 
+# Constants for Cloudflare restrictions
+CF_MAX_BYTES = 10485760
+CF_MAX_DIMENSION = 12000
+CF_MAX_PIXEL = 100000000
+SUPPORTED_IMAGE_TYPES = ("PNG", "JPEG")
 
-def output_handler(out_file: Path, cf_data: list) -> bool:  # create output file and append image data to csv
-    if out_file and cf_data:
-        toprow = [
-            "name",
-            "id",
-            "uploaded",
-            "variants"
-        ]
-        if out_file.exists():
-            writemode = 'a'
-            row_list = []
-        else:
-            writemode = 'w'
-            row_list = [toprow]
-        with open(out_file, writemode, newline='') as f:
+
+def output_handler(out_file: Path, cf_data: list) -> bool:
+    if not out_file or not cf_data:
+        return False
+
+    top_row = ["name", "id", "uploaded", "variants"]
+    write_mode = 'a' if out_file.exists() else 'w'
+    row_list = [top_row] if write_mode == 'w' else []
+
+    try:
+        with open(out_file, write_mode, newline='') as f:
             writer = csv.writer(f)
             for entry in cf_data:
                 images = entry["result"]["images"]
-                images_filename = images["filename"]
-                images_id = images["id"]
-                images_upload = images["uploaded"]
-                images_variants = images["variants"]
                 row_list.append(
                     [
-                        images_filename,
-                        images_id,
-                        images_upload,
-                        images_variants
+                        images["filename"],
+                        images["id"],
+                        images["uploaded"],
+                        images["variants"],
                     ]
                 )
             writer.writerows(row_list)
-            f.close()
-            return True
+        return True
+    except Exception as e:
+        logger.error(f"Error writing to output file: {e}")
+        return False
+
+
+def type_check(unk_type: Path) -> bool:
+    if not unk_type:
+        return False
+
+    try:
+        with Image.open(unk_type) as img:
+            return img.format in SUPPORTED_IMAGE_TYPES
+    except IOError as e:
+        logger.warning(f"Error opening image {unk_type}: {e}")
+        return False
+
+
+def img_handler(img: Path) -> bool:
+    if not img:
+        return False
+
+    img_name = img.name
+    img_bytes = img.stat().st_size
+    img_w, img_h = Image.open(img).size
+
+    if not type_check(img):
+        logger.warning(f'The file type for {img_name} is currently not supported')
+    elif img_bytes > CF_MAX_BYTES:
+        logger.warning(f'The file {img_name} is {img_bytes} bytes and exceeds the max size limit of {CF_MAX_BYTES} bytes.')
+    elif (img_w * img_h) > CF_MAX_PIXEL:
+        logger.warning(f'The file {img_name} is {img_w * img_h} pixels and exceeds the max pixel count of {CF_MAX_PIXEL}.')
+    elif img_w > CF_MAX_DIMENSION or img_h > CF_MAX_DIMENSION:
+        logger.warning(f'The file {img_name} is {img_w} by {img_h} pixels and exceeds the max single dimension of {CF_MAX_DIMENSION}.')
+    else:
+        return True
+
     return False
 
 
-def type_check(unk_type: Path) -> bool:  # validate file is desired image type
-    image_types = ("PNG", "JPEG")
-    if unk_type:
-        type_guess = Image.open(unk_type)
-        if type_guess and type_guess.format and type_guess.format in image_types:
-            return True
-    return False
+def input_handler(input_path: Path) -> list:
+    if not input_path:
+        return []
+
+    if input_path.is_dir():
+        return [f for f in input_path.iterdir() if f.is_file()]
+    elif input_path.is_file():
+        return [input_path]
+    else:
+        logger.warning(f"Invalid input path: {input_path}")
+        return []
 
 
-def img_handler(img: Path) -> bool:  # validate image against cloudflare restrictions
-    if img:
-        img_name = img.name
-        img_bytes = img.stat().st_size
-        img_w, img_h = (Image.open(img)).size
-
-        # Cloudflare restrictions
-        cf_maxbytes = 10485760
-        cf_maxdimension = 12000
-        cf_maxpixel = 100000000
-
-        if (type_check(img)) is False:  # validate type
-            print(f'The file type for {img_name} is currently not supported')
-        elif img_bytes > cf_maxbytes:  # check size. Images have a 10 megabyte size limit.
-            print(f'The file {img_name} is {img_bytes} Megabytes and the max size is {cf_maxbytes}')
-        elif (
-                img_w * img_h) > cf_maxpixel:  # check image area. Maximum image area is limited to 100 megapixels (for example, 10,000×10,000 pixels).
-            print(f'The file {img_name} is {img_w * img_h} pixels and the max pixel count is {cf_maxpixel}')
-        elif (
-                img_w or img_h) > cf_maxdimension:  # check file dimensions. Maximum image single dimension is 12,000 pixels.
-            print(f'The file {img_name} is {img_w} by {img_h} pixels and the max single dimension is {cf_maxdimension}')
-        else:
-            return True
-    raise Exception
-
-
-def input_handler(input_arg: Path) -> list:  # determine file or directory and return list of files
-    if input_arg:
-        if input_arg.is_dir():
-            input_list = [f for f in input_arg.iterdir() if f.is_file()]
-            return input_list
-        elif input_arg.is_file():
-            return [input_arg]
-    raise Exception
-
-
-def cf_upload(img: Path):  # define cloudflare upload function and return json data
+def cf_upload(img: Path):
     cftoken = args.cftoken
     cfid = args.cfid
-    if img and cftoken and cfid:
-        resp = requests.post(
-            f'https://api.cloudflare.com/client/v4/accounts/{cfid}/images/v1',
-            headers={'Authorization': f'Bearer {cftoken}'},
-            files={'file': (img.stem, open(img, 'rb'))}
-        )
-        if resp.status_code != 200:
-            print(
-                resp.status_code,
-                resp.raise_for_status,
-                resp.text
+
+    if not (img and cftoken and cfid):
+        return None
+
+    try:
+        with open(img, 'rb') as file:
+            resp = requests.post(
+                f'https://api.cloudflare.com/client/v4/accounts/{cfid}/images/v1',
+                headers={'Authorization': f'Bearer {cftoken}'},
+                files={'file': (img.stem, file)}
             )
+
+        if resp.status_code != 200:
+            logger.error(f"Error in Cloudflare upload: {resp.status_code}, {resp.text}")
+            return None
+
+        resp_json = resp.json()
+        if resp_json.get("success"):
+            return resp_json
         else:
-            resp_json = json.loads(resp.text)
-            if resp_json["success"] is "true":
-                return resp_json
-    raise Exception
+            logger.error(f"Cloudflare upload unsuccessful: {resp_json}")
+            return None
+    except Exception as e:
+        logger.error(f"Error in Cloudflare upload: {e}")
+        return None
 
 
 def main():
-    input_path = args.input
-    output_path = args.output
-    if input_path and output_path:
-        input_path = Path.resolve(input_path)
-        output_path = Path.resolve(output_path)
-        img_json_list = []
-        input_files = input_handler(input_arg=input_path)
-        for file_item in input_files:
-            file_item = Path.resolve(file_item)
-            if type_check(unk_type=file_item) is False:
-                # raise Warning and move to the next item
-                print("error")
-            elif img_handler(img=file_item) is False:
-                # raise Warning and move to the next item
-                print("error")
-            else:
-                img_json = cf_upload(img=file_item)
-                img_json_list.append(img_json)
-        if output_handler(out_file=output_path, cf_data=img_json_list):
-            print("Success")
-        else:
-            raise Exception
-    else:
-        raise Exception
+    input_path = Path(args.input)
+    output_path = Path(args.output) if args.output else None
+
+    if not input_path:
+        logger.error("Input path is required")
+        return
+
+    img_json_list = []
+    input_list = input_handler(input_path)
+
+    for item in input_list:
+        if not img_handler(item):
+            continue
+
+        img_json = cf_upload(item)
+        if img_json:
+            img_json_list.append(img_json)
+
+    if output_path and not output_handler(output_path, img_json_list):
+        logger.error("Failed to process output.")
+
+    logger.info("Processing completed.")
 
 
 if __name__ == "__main__":
