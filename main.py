@@ -1,7 +1,7 @@
 import argparse
-import csv
 import logging
 from pathlib import Path
+from csv import DictWriter
 
 import requests
 from PIL import Image
@@ -32,24 +32,22 @@ def output_handler(out_file: Path, cf_data: list) -> bool:
     if not out_file or not cf_data:
         return False
 
-    top_row = ["name", "id", "uploaded", "variants"]
+    fieldnames = ["name", "id", "uploaded", "variants"]
     write_mode = 'a' if out_file.exists() else 'w'
-    row_list = [top_row] if write_mode == 'w' else []
 
     try:
         with open(out_file, write_mode, newline='') as f:
-            writer = csv.writer(f)
+            writer = DictWriter(f, fieldnames=fieldnames)
+            if write_mode == 'w':
+                writer.writeheader()
             for entry in cf_data:
-                images = entry["result"]["images"]
-                row_list.append(
-                    [
-                        images["filename"],
-                        images["id"],
-                        images["uploaded"],
-                        images["variants"],
-                    ]
-                )
-            writer.writerows(row_list)
+                result = entry["result"]
+                writer.writerow({
+                    "name": result["filename"],
+                    "id": result["id"],
+                    "uploaded": result["uploaded"],
+                    "variants": result["variants"]
+                })
         return True
     except Exception as e:
         logger.error(f"Error writing to output file: {e}")
@@ -79,11 +77,14 @@ def img_handler(img: Path) -> bool:
     if not type_check(img):
         logger.warning(f'The file type for {img_name} is currently not supported')
     elif img_bytes > CF_MAX_BYTES:
-        logger.warning(f'The file {img_name} is {img_bytes} bytes and exceeds the max size limit of {CF_MAX_BYTES} bytes.')
+        logger.warning(
+            f'The file {img_name} is {img_bytes} bytes and exceeds the max size limit of {CF_MAX_BYTES} bytes.')
     elif (img_w * img_h) > CF_MAX_PIXEL:
-        logger.warning(f'The file {img_name} is {img_w * img_h} pixels and exceeds the max pixel count of {CF_MAX_PIXEL}.')
+        logger.warning(
+            f'The file {img_name} is {img_w * img_h} pixels and exceeds the max pixel count of {CF_MAX_PIXEL}.')
     elif img_w > CF_MAX_DIMENSION or img_h > CF_MAX_DIMENSION:
-        logger.warning(f'The file {img_name} is {img_w} by {img_h} pixels and exceeds the max single dimension of {CF_MAX_DIMENSION}.')
+        logger.warning(
+            f'The file {img_name} is {img_w} by {img_h} pixels and exceeds the max single dimension of {CF_MAX_DIMENSION}.')
     else:
         return True
 
