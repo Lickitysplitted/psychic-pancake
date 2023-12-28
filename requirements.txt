@@ -1,4 +1,3 @@
 Pillow
 rich
 requests
-pathlib
